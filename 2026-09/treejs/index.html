@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+	<meta charset="UTF-8">
+	<title>Dodécaèdre Three.js</title>
+	<style>
+		html, body { margin: 0; overflow: hidden; height: 100%; background: #000000; }
+		canvas { display: block; }
+	</style>
+</head>
+<body>
+	<script type="importmap">
+		{
+			"imports": {
+				"three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+				"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+			}
+		}
+	</script>
+	<script type="module">
+		import * as THREE from "three";
+		import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+		const scene = new THREE.Scene();
+		const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+		camera.position.set(0, 0, 4);
+
+		const renderer = new THREE.WebGLRenderer({ antialias: true });
+		renderer.setPixelRatio(window.devicePixelRatio);
+		renderer.setSize(window.innerWidth, window.innerHeight);
+		document.body.appendChild(renderer.domElement);
+
+		// modèle d'iq "outdoors lighting" : ciel (haut) + rebond au sol (bas) + soleil direct
+		const skyLight = new THREE.DirectionalLight(0x4488ff, 3.0); // lumière du ciel, bleue, venant d'en haut
+		skyLight.position.set(0, 5, 2);
+		scene.add(skyLight);
+
+		const bounceLight = new THREE.DirectionalLight(0x33aa55, 2.0); // rebond indirect du sol, vert, venant d'en bas
+		bounceLight.position.set(0, -5, 2);
+		scene.add(bounceLight);
+
+		const sunLight = new THREE.PointLight(0xffdd66, 2, 5); // soleil renforcé, dominant sur l'ambiance
+		sunLight.position.set(1, 3, 4);
+		scene.add(sunLight);
+
+		const geometry = new THREE.DodecahedronGeometry(1);
+
+		// vertex colors let each pentagon face be recolored independently
+		const baseColor = new THREE.Color(0x55d6be);
+		const vertexCount = geometry.attributes.position.count;
+		const colors = new Float32Array(vertexCount * 3);
+		for (let i = 0; i < vertexCount; i++) {
+			colors[i * 3] = baseColor.r;
+			colors[i * 3 + 1] = baseColor.g;
+			colors[i * 3 + 2] = baseColor.b;
+		}
+		geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+        const mesh = new THREE.Mesh(
+            geometry,
+            new THREE.MeshPhongMaterial({
+                vertexColors: true,
+                flatShading: true,   // garde les facettes visibles du dodécaèdre
+                specular: 0xffffff,
+                shininess: 100
+            })
+        );
+		scene.add(mesh);
+
+		const edges = new THREE.LineSegments(
+			new THREE.EdgesGeometry(geometry),
+			new THREE.LineBasicMaterial({ color: 0x0a0a0a })
+		);
+		mesh.add(edges);
+
+		const controls = new OrbitControls(camera, renderer.domElement);
+		controls.enableDamping = true;
+
+		// each pentagon face is triangulated into 3 triangles (9 vertices) in a row
+		const raycaster = new THREE.Raycaster();
+		const pointer = new THREE.Vector2();
+		let pointerDownPosition = null;
+
+		renderer.domElement.addEventListener("pointerdown", (event) => {
+			pointerDownPosition = { x: event.clientX, y: event.clientY };
+		});
+
+		renderer.domElement.addEventListener("pointerup", (event) => {
+			const dragDistance = Math.hypot(event.clientX - pointerDownPosition.x, event.clientY - pointerDownPosition.y);
+			if (dragDistance > 5) return; // ignore orbit drags
+
+			pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+			pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+			raycaster.setFromCamera(pointer, camera);
+
+			const intersections = raycaster.intersectObject(mesh, false);
+			if (intersections.length === 0) return;
+
+			const faceVertexStart = Math.floor(intersections[0].faceIndex / 3) * 9;
+			const colorAttribute = geometry.attributes.color;
+			const clickColor = new THREE.Color().setHSL(Math.random(), 0.5, 0.55); // palette HSV moyennement saturée
+			for (let i = 0; i < 9; i++) {
+				colorAttribute.setXYZ(faceVertexStart + i, clickColor.r, clickColor.g, clickColor.b);
+			}
+			colorAttribute.needsUpdate = true;
+		});
+
+		function renderFrame() {
+			mesh.rotation.y += 0.003; // rotation lente automatique sur l'axe Y
+			controls.update();
+			renderer.render(scene, camera);
+			requestAnimationFrame(renderFrame);
+		}
+		requestAnimationFrame(renderFrame);
+
+		window.addEventListener("resize", () => {
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+		});
+	</script>
+</body>
+</html>
