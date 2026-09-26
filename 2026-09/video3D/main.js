@@ -1,15 +1,34 @@
 const game = document.getElementById("game");
 const ctx = game.getContext("2d");
 
-const cubeVertices = [
-	[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
-	[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]
+const phi = (1 + Math.sqrt(5)) / 2;
+const iphi = 1 / phi;
+const dodecahedronVertices = [
+	[-1, -1, -1], [-1, -1, 1], [-1, 1, -1], [-1, 1, 1],
+	[1, -1, -1], [1, -1, 1], [1, 1, -1], [1, 1, 1],
+	[0, -iphi, -phi], [0, -iphi, phi],
+	[0, iphi, -phi], [0, iphi, phi],
+	[-iphi, -phi, 0], [-iphi, phi, 0],
+	[iphi, -phi, 0], [iphi, phi, 0],
+	[-phi, 0, -iphi], [-phi, 0, iphi],
+	[phi, 0, -iphi], [phi, 0, iphi]
 ];
-const cubeEdges = [
-	[0, 1], [1, 2], [2, 3], [3, 0],
-	[4, 5], [5, 6], [6, 7], [7, 4],
-	[0, 4], [1, 5], [2, 6], [3, 7]
-];
+
+const dodecahedronEdges = [];
+const edgeLengthSquared = 4 / (phi * phi);
+
+for (let start = 0; start < dodecahedronVertices.length; start++) {
+	for (let end = start + 1; end < dodecahedronVertices.length; end++) {
+		const differenceX = dodecahedronVertices[start][0] - dodecahedronVertices[end][0];
+		const differenceY = dodecahedronVertices[start][1] - dodecahedronVertices[end][1];
+		const differenceZ = dodecahedronVertices[start][2] - dodecahedronVertices[end][2];
+		const distanceSquared = differenceX ** 2 + differenceY ** 2 + differenceZ ** 2;
+
+		if (Math.abs(distanceSquared - edgeLengthSquared) < 1e-9) {
+			dodecahedronEdges.push([start, end]);
+		}
+	}
+}
 
 function renderFrame(timestamp) {
 	const angle = timestamp * 0.001;
@@ -19,13 +38,13 @@ function renderFrame(timestamp) {
 	const sineX = Math.sin(angle * 0.7);
 	const centerX = game.width / 2;
 	const centerY = game.height / 2;
-	const scale = 600;
+	const scale = 250;
 	const cameraDistance = 4;
 
 	ctx.fillStyle = "black";
 	ctx.fillRect(0, 0, game.width, game.height);
 
-	const projectedVertices = cubeVertices.map(([x, y, z]) => {
+	const projectedVertices = dodecahedronVertices.map(([x, y, z]) => {
 		const rotatedX = x * cosineY - z * sineY;
 		const rotatedZ = x * sineY + z * cosineY;
 		const tiltedY = y * cosineX - rotatedZ * sineX;
@@ -41,7 +60,7 @@ function renderFrame(timestamp) {
 	ctx.strokeStyle = "#55d6be";
 	ctx.lineWidth = 3;
 	ctx.beginPath();
-	for (const [start, end] of cubeEdges) {
+	for (const [start, end] of dodecahedronEdges) {
 		ctx.moveTo(...projectedVertices[start]);
 		ctx.lineTo(...projectedVertices[end]);
 	}
