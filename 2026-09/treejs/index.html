@@ -1,14 +1,33 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
 	<meta charset="UTF-8">
 	<title>Dodécaèdre Three.js</title>
 	<style>
-		html, body { margin: 0; overflow: hidden; height: 100%; background: #000000; }
-		canvas { display: block; }
+		html,
+		body {
+			margin: 0;
+			overflow: hidden;
+			height: 100%;
+			background: #000000;
+		}
+
+		canvas {
+			display: block;
+		}
 	</style>
 </head>
+
 <body>
+	<button id="rotationToggle"
+		style="position: fixed; top: 12px; left: 12px; z-index: 10; padding: 8px 14px; background: #55d6be; color: #0a0a0a; border: none; border-radius: 4px; font-family: sans-serif; cursor: pointer;">
+		Arrêter la rotation
+	</button>
+	<button id="colorModeToggle"
+		style="position: fixed; top: 52px; left: 12px; z-index: 10; padding: 8px 14px; background: #4488ff; color: #ffffff; border: none; border-radius: 4px; font-family: sans-serif; cursor: pointer;">
+		Couleurs : Arc-en-ciel
+	</button>
 	<script type="importmap">
 		{
 			"imports": {
@@ -30,41 +49,90 @@
 		renderer.setSize(window.innerWidth, window.innerHeight);
 		document.body.appendChild(renderer.domElement);
 
-		// modèle d'iq "outdoors lighting" : ciel (haut) + rebond au sol (bas) + soleil direct
-		const skyLight = new THREE.DirectionalLight(0x4488ff, 3.0); // lumière du ciel, bleue, venant d'en haut
-		skyLight.position.set(0, 5, 2);
-		scene.add(skyLight);
+		// modèle "outdoors" : hémisphère (ciel/sol) quasi blanc + soleil blanc + appoint ambiant
+		const hemiLight = new THREE.HemisphereLight(0xeef4ff, 0x8a7a66, 1.2); // ciel bleu très pâle, sol beige
+		scene.add(hemiLight);
 
-		const bounceLight = new THREE.DirectionalLight(0x33aa55, 2.0); // rebond indirect du sol, vert, venant d'en bas
-		bounceLight.position.set(0, -5, 2);
-		scene.add(bounceLight);
-
-		const sunLight = new THREE.PointLight(0xffdd66, 2, 5); // soleil renforcé, dominant sur l'ambiance
-		sunLight.position.set(1, 3, 4);
+		// "luciole" : point light blanc chaud qui virevolte autour du dodécaèdre
+		const sunLight = new THREE.PointLight(0xfff2cc, 20, 0, 2); // decay 2 = atténuation physique en 1/d²
+		sunLight.position.set(3, 4, 5);
 		scene.add(sunLight);
+
+		// petit globe lumineux pour matérialiser la luciole
+		sunLight.add(new THREE.Mesh(
+			new THREE.SphereGeometry(0.05, 8, 8),
+			new THREE.MeshBasicMaterial({ color: 0xfff2cc })
+		));
+
+		// vol de la luciole : sphère de rayon constant, longitude circulaire + latitude sinusoïdale
+		let sunAngle = 0;
+		const sunRadius = 2.3;
+		const sunLatitudeAmplitude = 0.8; // ± ~46° au-dessus/en dessous de l'équateur
+		const sunLatitudeFrequency = 1.7;
+
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.35); // remonte les zones à contre-jour
+		scene.add(ambientLight);
 
 		const geometry = new THREE.DodecahedronGeometry(1);
 
-		// vertex colors let each pentagon face be recolored independently
-		const baseColor = new THREE.Color(0x55d6be);
+		// 12 pentagones × 9 sommets : une teinte par face, répartie sur le cercle HSV
+		const faceCount = 12;
+		const verticesPerFace = 9;
 		const vertexCount = geometry.attributes.position.count;
 		const colors = new Float32Array(vertexCount * 3);
-		for (let i = 0; i < vertexCount; i++) {
-			colors[i * 3] = baseColor.r;
-			colors[i * 3 + 1] = baseColor.g;
-			colors[i * 3 + 2] = baseColor.b;
-		}
-		geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+		const faceColor = new THREE.Color();
 
-        const mesh = new THREE.Mesh(
-            geometry,
-            new THREE.MeshPhongMaterial({
-                vertexColors: true,
-                flatShading: true,   // garde les facettes visibles du dodécaèdre
-                specular: 0xffffff,
-                shininess: 100
-            })
-        );
+		const colorModes = [
+			{ name: "Arc-en-ciel", fn: (f) => faceColor.setHSL(f / 12, 1.0, 0.5) },
+			{ name: "Or", fn: (f) => faceColor.setHSL((f * 0.618033988749895) % 1, 0.85, 0.55) },
+			{ name: "Température", fn: (f) => {
+				const v = new THREE.Vector3().fromBufferAttribute(geometry.attributes.position, f * 9);
+				const y = v.y / 1.4;
+				faceColor.setHSL(0.6 - y * 0.3, 0.8, 0.5 + y * 0.1);
+			}},
+			{ name: "Gemmes", fn: (f) => {
+				const palette = [0xff6b6b, 0x4ecdc4, 0xffe66d, 0x95e1d3];
+				faceColor.setHex(palette[f % 4]);
+			}}
+		];
+
+		function applyColorMode(modeIndex) {
+			for (let face = 0; face < faceCount; face++) {
+				colorModes[modeIndex].fn(face);
+				for (let i = 0; i < verticesPerFace; i++) {
+					const v = face * verticesPerFace + i;
+					colors[v * 3] = faceColor.r;
+					colors[v * 3 + 1] = faceColor.g;
+					colors[v * 3 + 2] = faceColor.b;
+				}
+			}
+			geometry.attributes.color.needsUpdate = true;
+		}
+
+		geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3)); // enregistrer AVANT le premier appel
+		applyColorMode(0);
+		// glow par sommet : 0 = face normale, >0 = face qui émet sa propre couleur
+		const glow = new Float32Array(vertexCount);
+		geometry.setAttribute("aGlow", new THREE.BufferAttribute(glow, 1));
+
+		const material = new THREE.MeshStandardMaterial({
+			vertexColors: true,
+			flatShading: true,   // garde les facettes visibles du dodécaèdre
+			roughness: 0.4,
+			metalness: 0.0
+		});
+
+		// injection custom : aGlow (attribut) -> vGlow (varying) -> émissif teinté par la couleur de la face
+		material.onBeforeCompile = (shader) => {
+			shader.vertexShader = shader.vertexShader
+				.replace("#include <common>", "#include <common>\nattribute float aGlow;\nvarying float vGlow;")
+				.replace("#include <begin_vertex>", "#include <begin_vertex>\nvGlow = aGlow;");
+			shader.fragmentShader = shader.fragmentShader
+				.replace("#include <common>", "#include <common>\nvarying float vGlow;")
+				.replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\ntotalEmissiveRadiance += vColor.rgb * vGlow; // glow par face");
+		};
+
+		const mesh = new THREE.Mesh(geometry, material);
 		scene.add(mesh);
 
 		const edges = new THREE.LineSegments(
@@ -97,16 +165,52 @@
 			if (intersections.length === 0) return;
 
 			const faceVertexStart = Math.floor(intersections[0].faceIndex / 3) * 9;
-			const colorAttribute = geometry.attributes.color;
-			const clickColor = new THREE.Color().setHSL(Math.random(), 0.5, 0.55); // palette HSV moyennement saturée
+			const glowAttribute = geometry.attributes.aGlow;
+
+			// chaque clic illumine la face, qui décline ensuite progressivement
+			const glowLevel = glowAttribute.getX(faceVertexStart) + 1.2;
 			for (let i = 0; i < 9; i++) {
-				colorAttribute.setXYZ(faceVertexStart + i, clickColor.r, clickColor.g, clickColor.b);
+				glowAttribute.setX(faceVertexStart + i, glowLevel);
 			}
-			colorAttribute.needsUpdate = true;
+			glowAttribute.needsUpdate = true;
+		});
+		let isRotating = true;
+		const rotationButton = document.getElementById("rotationToggle");
+		rotationButton.addEventListener("click", () => {
+			isRotating = !isRotating;
+			rotationButton.textContent = isRotating ? "Arrêter la rotation" : "Démarrer la rotation";
 		});
 
+		let colorModeIndex = 0;
+		const colorModeButton = document.getElementById("colorModeToggle");
+		colorModeButton.addEventListener("click", () => {
+			colorModeIndex = (colorModeIndex + 1) % colorModes.length;
+			colorModeButton.textContent = `Couleurs : ${colorModes[colorModeIndex].name}`;
+			applyColorMode(colorModeIndex);
+		});
 		function renderFrame() {
-			mesh.rotation.y += 0.003; // rotation lente automatique sur l'axe Y
+			if (isRotating) {
+				mesh.rotation.y += 0.003; // rotation lente automatique sur l'axe Y
+			}
+
+			// orbite sphérique à distance constante : longitude = angle, latitude = sin
+			sunAngle += 0.015;
+			const latitude = Math.sin(sunAngle * sunLatitudeFrequency) * sunLatitudeAmplitude;
+			const r = Math.cos(latitude) * sunRadius; // rayon projeté sur le plan horizontal
+			sunLight.position.set(
+				Math.cos(sunAngle) * r,
+				Math.sin(latitude) * sunRadius,
+				Math.sin(sunAngle) * r
+			);
+
+			// décroissance progressive du glow des faces (effet luciole)
+			const glowAttr = geometry.attributes.aGlow;
+			for (let i = 0; i < glowAttr.count; i++) {
+				const g = glowAttr.getX(i);
+				if (g > 0) glowAttr.setX(i, Math.max(0, g - 0.004));
+			}
+			glowAttr.needsUpdate = true;
+
 			controls.update();
 			renderer.render(scene, camera);
 			requestAnimationFrame(renderFrame);
@@ -120,4 +224,5 @@
 		});
 	</script>
 </body>
+
 </html>
