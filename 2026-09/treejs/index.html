@@ -20,6 +20,9 @@
 </head>
 
 <body>
+	<div id="vignette"
+		style="position: fixed; inset: 0; pointer-events: none; z-index: 5; background: radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(0,10,30,0.8) 100%);">
+	</div>
 	<button id="rotationToggle"
 		style="position: fixed; top: 12px; left: 12px; z-index: 10; padding: 8px 14px; background: #55d6be; color: #0a0a0a; border: none; border-radius: 4px; font-family: sans-serif; cursor: pointer;">
 		Arrêter la rotation
@@ -49,8 +52,56 @@
 		renderer.setSize(window.innerWidth, window.innerHeight);
 		document.body.appendChild(renderer.domElement);
 
+		// fond équirectangulaire en pavage de Truchet (arcs de cercle aléatoires), aussi utilisé comme environnement réfléchi
+		function makeTruchetTexture() {
+			const cells = 32, size = 64;
+			const canvas = document.createElement("canvas");
+			canvas.width = cells * size;
+			canvas.height = (cells / 2) * size;
+			const ctx = canvas.getContext("2d");
+			const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+			gradient.addColorStop(0, "#d6ecff");
+			gradient.addColorStop(0.5, "#eaf5ff");
+			gradient.addColorStop(1, "#b8d8f5");
+			ctx.fillStyle = gradient;
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			// un seul dégradé continu pour tous les arcs : pas de raccord de couleur entre cases
+			const lineGradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+			["#ffffff", "#7fb8ee", "#4a90d9", "#cfe6ff", "#ffffff"].forEach((c, k) => lineGradient.addColorStop(k / 4, c));
+			ctx.strokeStyle = lineGradient;
+			ctx.lineWidth = size * 0.16;
+			ctx.lineCap = "butt";
+			for (let j = 0; j < cells / 2; j++) {
+				for (let i = 0; i < cells; i++) {
+					const x = i * size, y = j * size;
+					ctx.beginPath();
+					if (Math.random() < 0.5) { // arcs centrés sur les coins haut-gauche et bas-droit
+						ctx.arc(x, y, size / 2, 0, Math.PI / 2);
+						ctx.stroke();
+						ctx.beginPath();
+						ctx.arc(x + size, y + size, size / 2, Math.PI, Math.PI * 1.5);
+					} else { // arcs centrés sur les coins haut-droit et bas-gauche
+						ctx.arc(x + size, y, size / 2, Math.PI / 2, Math.PI);
+						ctx.stroke();
+						ctx.beginPath();
+						ctx.arc(x, y + size, size / 2, Math.PI * 1.5, Math.PI * 2);
+					}
+					ctx.stroke();
+				}
+			}
+			const texture = new THREE.CanvasTexture(canvas);
+			texture.mapping = THREE.EquirectangularReflectionMapping;
+			texture.colorSpace = THREE.SRGBColorSpace;
+			return texture;
+		}
+		const truchetTexture = makeTruchetTexture();
+		scene.background = truchetTexture;
+		scene.environment = truchetTexture;
+		scene.environmentIntensity = 0.7;
+		scene.backgroundIntensity = 0.6;
+
 		// modèle "outdoors" : hémisphère (ciel/sol) quasi blanc + soleil blanc + appoint ambiant
-		const hemiLight = new THREE.HemisphereLight(0xeef4ff, 0x8a7a66, 1.2); // ciel bleu très pâle, sol beige
+		const hemiLight = new THREE.HemisphereLight(0xeef4ff, 0x8a7a66, 0.6); // ciel bleu très pâle, sol beige
 		scene.add(hemiLight);
 
 		// 3 lucioles colorées qui virevoltent autour du dodécaèdre
@@ -68,7 +119,7 @@
 			scene.add(f.light);
 		}
 
-		const ambientLight = new THREE.AmbientLight(0xffffff, 0.35); // remonte les zones à contre-jour
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.15); // remonte les zones à contre-jour
 		scene.add(ambientLight);
 
 		const geometry = new THREE.DodecahedronGeometry(1);
@@ -116,8 +167,8 @@
 		const material = new THREE.MeshStandardMaterial({
 			vertexColors: true,
 			flatShading: true,   // garde les facettes visibles du dodécaèdre
-			roughness: 0.4,
-			metalness: 0.0
+			roughness: 0.25,
+			metalness: 0.45
 		});
 
 		// injection custom : aGlow (attribut) -> vGlow (varying) -> émissif teinté par la couleur de la face
@@ -138,6 +189,43 @@
 			new THREE.LineBasicMaterial({ color: 0x0a0a0a })
 		);
 		mesh.add(edges);
+
+		// un piston par face : base en étoile à 5 branches (pointes vers les coins du pentagone) + tige
+		const starMaterial = new THREE.MeshStandardMaterial({ color: 0xd4a73a, metalness: 1.0, roughness: 0.2, envMapIntensity: 1.0 });
+		const starShape = new THREE.Shape();
+		for (let i = 0; i < 10; i++) {
+			const r = i % 2 === 0 ? 0.5 : 0.22;
+			const a = (i * Math.PI) / 5; // première pointe sur +X local = direction d'un coin
+			const x = Math.cos(a) * r, y = Math.sin(a) * r;
+			if (i === 0) starShape.moveTo(x, y); else starShape.lineTo(x, y);
+		}
+		starShape.closePath();
+		// étoile haute de 0.5 (biseau inclus) : la majeure partie reste dans le dodécaèdre
+		const starHeight = 0.5;
+		const starGeometry = new THREE.ExtrudeGeometry(starShape, {
+			depth: starHeight - 0.04, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 3
+		}).translate(0, 0, 0.02);
+		const pistonRest = 0.02, pistonStroke = 0.3; // au repos, l'étoile dépasse de la face (évite le z-fighting)
+		const pistons = [];
+		const facePositions = geometry.attributes.position;
+		for (let face = 0; face < faceCount; face++) {
+			const v0 = new THREE.Vector3().fromBufferAttribute(facePositions, face * 9);
+			const v1 = new THREE.Vector3().fromBufferAttribute(facePositions, face * 9 + 1);
+			const v2 = new THREE.Vector3().fromBufferAttribute(facePositions, face * 9 + 2);
+			const normal = new THREE.Vector3().crossVectors(v1.clone().sub(v0), v2.clone().sub(v0)).normalize();
+			if (normal.dot(v0) < 0) normal.negate();
+			const center = normal.clone().multiplyScalar(normal.dot(v0));
+			const xAxis = v0.clone().sub(center).normalize(); // vers un coin du pentagone
+			const yAxis = new THREE.Vector3().crossVectors(normal, xAxis);
+
+			const piston = new THREE.Group();
+			piston.add(new THREE.Mesh(starGeometry, starMaterial));
+			piston.matrixAutoUpdate = false;
+			const basis = new THREE.Matrix4().makeBasis(xAxis, yAxis, normal);
+			piston.userData = { basis, center, normal, face };
+			mesh.add(piston);
+			pistons.push(piston);
+		}
 
 		const controls = new OrbitControls(camera, renderer.domElement);
 		controls.enableDamping = true;
@@ -210,6 +298,15 @@
 				if (g > 0.001) glowAttr.setX(i, g * 0.955); // sinon déjà éteint
 			}
 			glowAttr.needsUpdate = true;
+
+			// le piston suit le glow de sa face : même easing (sortie au clic, retrait exponentiel)
+			for (const piston of pistons) {
+				const { basis, center, normal, face } = piston.userData;
+				const extension = Math.min(glowAttr.getX(face * 9) / 4, 1) * pistonStroke;
+				const origin = center.clone().addScaledVector(normal, extension + pistonRest - starHeight);
+				piston.matrix.copy(basis).setPosition(origin);
+				piston.matrixWorldNeedsUpdate = true;
+			}
 
 			controls.update();
 			renderer.render(scene, camera);
