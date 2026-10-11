@@ -97,11 +97,11 @@
 		const truchetTexture = makeTruchetTexture();
 		scene.background = truchetTexture;
 		scene.environment = truchetTexture;
-		scene.environmentIntensity = 0.7;
-		scene.backgroundIntensity = 0.6;
+		scene.environmentIntensity = 0.25;
+		scene.backgroundIntensity = 0.35;
 
 		// modèle "outdoors" : hémisphère (ciel/sol) quasi blanc + soleil blanc + appoint ambiant
-		const hemiLight = new THREE.HemisphereLight(0xeef4ff, 0x8a7a66, 0.6); // ciel bleu très pâle, sol beige
+		const hemiLight = new THREE.HemisphereLight(0xeef4ff, 0x8a7a66, 0.15); // ciel bleu très pâle, sol beige
 		scene.add(hemiLight);
 
 		// 3 lucioles colorées qui virevoltent autour du dodécaèdre
@@ -119,7 +119,7 @@
 			scene.add(f.light);
 		}
 
-		const ambientLight = new THREE.AmbientLight(0xffffff, 0.15); // remonte les zones à contre-jour
+		const ambientLight = new THREE.AmbientLight(0xffffff, 0.04); // remonte les zones à contre-jour
 		scene.add(ambientLight);
 
 		const geometry = new THREE.DodecahedronGeometry(1);
@@ -164,8 +164,57 @@
 		const glow = new Float32Array(vertexCount);
 		geometry.setAttribute("aGlow", new THREE.BufferAttribute(glow, 1));
 
+		// bump map procédural (sommes de sinus entiers => se raccorde parfaitement)
+		function makeBumpTexture() {
+			const size = 256;
+			const canvas = document.createElement("canvas");
+			canvas.width = canvas.height = size;
+			const ctx = canvas.getContext("2d");
+			const img = ctx.createImageData(size, size);
+			const TAU = Math.PI * 2;
+			for (let y = 0; y < size; y++) {
+				for (let x = 0; x < size; x++) {
+					const u = x / size * TAU, v = y / size * TAU;
+					let h = Math.sin(3 * u + 2 * v) + Math.sin(5 * u - 4 * v + 1) + 0.6 * Math.sin(11 * u + 7 * v + 2)
+						+ 0.5 * Math.sin(9 * v - 13 * u) + 0.3 * Math.sin(23 * u + 17 * v) + 0.3 * Math.sin(19 * u - 29 * v + 3);
+					const g = Math.max(0, Math.min(255, 128 + h * 28));
+					const k = (y * size + x) * 4;
+					img.data[k] = img.data[k + 1] = img.data[k + 2] = g;
+					img.data[k + 3] = 255;
+				}
+			}
+			ctx.putImageData(img, 0, 0);
+			const texture = new THREE.CanvasTexture(canvas);
+			texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+			return texture;
+		}
+		const bumpTexture = makeBumpTexture();
+
+		// UV planaires par face (coordonnées dans le plan du pentagone) pour que le bump soit homogène
+		{
+			const pos = geometry.attributes.position;
+			const uv = new Float32Array(vertexCount * 2);
+			const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+			for (let face = 0; face < faceCount; face++) {
+				a.fromBufferAttribute(pos, face * 9);
+				b.fromBufferAttribute(pos, face * 9 + 1);
+				c.fromBufferAttribute(pos, face * 9 + 2);
+				const n = new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a)).normalize();
+				const xAxis = b.clone().sub(a).normalize();
+				const yAxis = new THREE.Vector3().crossVectors(n, xAxis);
+				for (let i = 0; i < 9; i++) {
+					const p = new THREE.Vector3().fromBufferAttribute(pos, face * 9 + i);
+					uv[(face * 9 + i) * 2] = p.dot(xAxis);
+					uv[(face * 9 + i) * 2 + 1] = p.dot(yAxis);
+				}
+			}
+			geometry.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+		}
+
 		const material = new THREE.MeshStandardMaterial({
 			vertexColors: true,
+			bumpMap: bumpTexture,
+			bumpScale: 1.5,
 			flatShading: true,   // garde les facettes visibles du dodécaèdre
 			roughness: 0.25,
 			metalness: 0.45
@@ -191,21 +240,21 @@
 		mesh.add(edges);
 
 		// un piston par face : base en étoile à 5 branches (pointes vers les coins du pentagone) + tige
-		const starMaterial = new THREE.MeshStandardMaterial({ color: 0xd4a73a, metalness: 1.0, roughness: 0.2, envMapIntensity: 1.0 });
+		const starMaterial = new THREE.MeshStandardMaterial({ color: 0xd4a73a, metalness: 1.0, roughness: 0.2, envMapIntensity: 1.0, bumpMap: bumpTexture, bumpScale: 1.0 });
 		const starShape = new THREE.Shape();
 		for (let i = 0; i < 10; i++) {
-			const r = i % 2 === 0 ? 0.5 : 0.22;
+			const r = i % 2 === 0 ? 0.35 : 0.155;
 			const a = (i * Math.PI) / 5; // première pointe sur +X local = direction d'un coin
 			const x = Math.cos(a) * r, y = Math.sin(a) * r;
 			if (i === 0) starShape.moveTo(x, y); else starShape.lineTo(x, y);
 		}
 		starShape.closePath();
 		// étoile haute de 0.5 (biseau inclus) : la majeure partie reste dans le dodécaèdre
-		const starHeight = 0.5;
+		const starHeight = 1.4;
 		const starGeometry = new THREE.ExtrudeGeometry(starShape, {
 			depth: starHeight - 0.04, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 3
 		}).translate(0, 0, 0.02);
-		const pistonRest = 0.02, pistonStroke = 0.3; // au repos, l'étoile dépasse de la face (évite le z-fighting)
+		const pistonRest = 0.02, pistonStroke = 1.2; // au repos, l'étoile dépasse de la face (évite le z-fighting)
 		const pistons = [];
 		const facePositions = geometry.attributes.position;
 		for (let face = 0; face < faceCount; face++) {
