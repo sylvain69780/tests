@@ -1,0 +1,11 @@
+# Node.js dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Python-generated files and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
