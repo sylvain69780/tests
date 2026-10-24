@@ -1,0 +1,75 @@
+@page "/"
+@inject ISubscriptionsApiClient Api
+
+<PageTitle>Subscriptions</PageTitle>
+
+<h1>Subscriptions</h1>
+
+<form @onsubmit="AddAsync" class="mb-3">
+    <label for="feed-url" class="form-label">Feed address</label>
+    <div class="input-group">
+        <input id="feed-url" class="form-control" type="text" maxlength="@SubscriptionLimits.MaxUrlLength" @bind="_url" @bind:event="oninput" />
+        <button type="submit" class="btn btn-primary" disabled="@_busy">Add</button>
+    </div>
+</form>
+
+<div role="alert">
+    @if (_message is not null)
+    {
+        <p class="text-danger">@_message</p>
+    }
+</div>
+
+@if (_subscriptions is { Count: > 0 })
+{
+    <ol>
+        @foreach (var subscription in _subscriptions)
+        {
+            <li>@subscription.Url</li>
+        }
+    </ol>
+}
+else if (_loaded && _subscriptions is not null)
+{
+    <p>No subscriptions yet. Add a feed address above.</p>
+}
+
+@code {
+    private string _url = string.Empty;
+    private string? _message;
+    private bool _busy;
+    private bool _loaded;
+    private IReadOnlyList<SubscriptionDto>? _subscriptions;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _subscriptions = await Api.ListAsync();
+        _loaded = true;
+        _message = _subscriptions is null ? "Could not load your subscriptions. Please try again." : null;
+    }
+
+    private async Task AddAsync()
+    {
+        _busy = true;
+        _message = null;
+        try
+        {
+            var outcome = await Api.AddAsync(_url);
+            if (outcome.Succeeded)
+            {
+                _url = string.Empty;
+                await LoadAsync();
+            }
+            else
+            {
+                _message = outcome.ErrorMessage;
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}
