@@ -1,0 +1,123 @@
+openapi: 3.0.3
+info:
+  title: RSS Feed Reader API (MVP)
+  version: 1.0.0
+  description: Subscription management for the MVP. Data is held in memory only.
+servers:
+  - url: http://localhost:5151
+paths:
+  /api/subscriptions:
+    get:
+      summary: List all subscriptions in the order they were added
+      operationId: listSubscriptions
+      responses:
+        "200":
+          description: The current subscriptions (empty array when none)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Subscription"
+              example:
+                - url: https://devblogs.microsoft.com/dotnet/feed/
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      summary: Add a subscription
+      operationId: addSubscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddSubscriptionRequest"
+            example:
+              url: https://devblogs.microsoft.com/dotnet/feed/
+      responses:
+        "201":
+          description: Subscription added. The body is the stored subscription (trimmed URL).
+          headers:
+            Location:
+              description: Address of the subscription list
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Subscription"
+        "400":
+          description: >-
+            Invalid input: missing or empty body or url, url longer than 2048 characters,
+            or not an absolute http/https address.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: https://tools.ietf.org/html/rfc9110#section-15.5.1
+                title: One or more validation errors occurred.
+                status: 400
+                errors:
+                  url:
+                    - Enter a valid http or https web address.
+        "409":
+          description: The normalized address is already subscribed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetails"
+              example:
+                type: https://tools.ietf.org/html/rfc9110#section-15.5.10
+                title: Already subscribed
+                status: 409
+                detail: You are already subscribed to this feed.
+        "413":
+          description: Request body larger than the allowed limit (4 KB).
+        "500":
+          $ref: "#/components/responses/ServerError"
+components:
+  schemas:
+    AddSubscriptionRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          maxLength: 2048
+          description: Feed address. Surrounding whitespace is trimmed before validation.
+    Subscription:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: Feed address as entered, trimmed.
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        errors:
+          type: object
+          description: Present on 400 responses; keys are field names.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+  responses:
+    ServerError:
+      description: Unexpected failure. The body never contains stack traces or internal details.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
+          example:
+            title: An unexpected error occurred.
+            status: 500
